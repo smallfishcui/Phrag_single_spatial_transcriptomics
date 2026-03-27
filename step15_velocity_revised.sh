@@ -101,3 +101,87 @@ adata.obs.index = [bc.split('-')[0] for bc in adata.obs.index]
 
 # 检查前 10 个
 print(adata.obs.index[:10])
+
+adata= scv.read('NAint113_Allcelltype_dynamicModel.h5ad')
+# make Umap to check data
+#sc.pp.pca(adata, n_comps=35)
+#sc.pp.neighbors(adata, n_neighbors=50, use_rep='X_pca')
+#sc.tl.umap(adata)
+
+# Load the UMAP coordinates from the CSV file
+umap_coords = pd.read_csv("umap_coordinates_harmony_clusters_0.8.csv", index_col=0) #！！！！！！！！！！！！错误！看step13_cellrank2_revised.sh
+
+# Assign the UMAP coordinates to the AnnData object
+adata.obsm["X_umap"] = umap_coords.values
+sc.pl.umap(adata, color='harmony_clusters_0.8', frameon=False, legend_loc='on data', title='', save='_celltypes.pdf')
+#sc.pl.umap(adata, color='CellType', frameon=False, legend_loc='on data', title='', save='_celltypes.pdf')
+
+#get the proportion
+#scv.pl.proportions(adata, groupby='CellType', save='_celltypes.pdf')
+scv.pl.proportions(adata, groupby='harmony_clusters_0.8', save='_celltypes.pdf')
+scv.pp.filter_and_normalize(adata)
+# pre-process, deepvelo
+scv.pp.moments(adata, n_pcs=30, n_neighbors=40)
+# Extract dynamical velocity vectors
+scv.tl.recover_dynamics(adata, n_jobs=40)
+scv.tl.velocity(adata, mode='dynamical', use_raw=True)
+scv.tl.velocity_graph(adata, n_jobs=40)
+scv.pl.velocity_embedding_stream(adata, basis='umap', color='harmony_clusters_0.8', save='velocity_stream_EU620.svg')
+#scv.pl.velocity_embedding_stream(adata, basis='umap', color='CellType_cluster', save='velocity_stream_EU620.svg')
+
+# Latent time inference
+scv.tl.latent_time(adata)
+scv.pl.scatter(adata, color='latent_time', color_map='gnuplot', size=80, save='latent_time_EU620.svg')
+
+#https://colab.research.google.com/github/theislab/scvelo_notebooks/blob/master/VelocityBasics.ipynb#scrollTo=GHjDOr1IBzP0
+
+#PAGA
+#scv.tl.rank_velocity_genes(adata, groupby='CellType', min_corr=.3)
+scv.tl.rank_velocity_genes(adata, groupby='harmony_clusters_0.8', min_corr=.3)
+df = scv.DataFrame(adata.uns['rank_velocity_genes']['names'])
+df.head()
+
+kwargs = dict(frameon=False, size=10, linewidth=1.5, add_outline='procambium, shoot apical meristem, intercalary meristem')
+scv.pl.scatter(adata, df['shoot apical meristem'][:5], ylabel='shoot apical meristem', frameon=False, color='CellType', size=10, linewidth=1.5, save="shoot apical meristem_scatter.pdf")
+#scv.pl.scatter(adata, df['Shoot system epidermis'][:5], ylabel='Protoxylem', frameon=False, color='CellType', size=10, linewidth=1.5, save='Protoxylem_scatter.pdf')
+#scv.pl.scatter(adata, df['Shoot system epidermis'][:5], ylabel='Xylem', frameon=False, color='CellType', size=10, linewidth=1.5, save='Xylem_scatter.pdf')
+
+scv.tl.velocity_confidence(adata)
+keys = 'velocity_length', 'velocity_confidence'
+scv.pl.scatter(adata, c=keys, cmap='coolwarm', perc=[5, 95],save='velocity_confidence.pdf')
+
+#scv.pl.velocity_graph(adata, threshold=.1, color='CellType',save='velocity_graph.pdf')
+scv.pl.velocity_graph(adata, threshold=.1, color='harmony_clusters_0.8',save='velocity_graph.pdf')
+
+x, y = scv.utils.get_cell_transitions(adata, basis='umap', starting_cell=70)
+ax = scv.pl.velocity_graph(adata, c='lightgrey', edge_width=.05, show=False)
+ax = scv.pl.scatter(adata, x=x, y=y, s=120, c='ascending', cmap='gnuplot', ax=ax,save='velocity_graph.pdf')
+
+scv.tl.velocity_pseudotime(adata)
+scv.pl.scatter(adata, color='velocity_pseudotime', cmap='gnuplot', save='velocity_pseudotime.pdf')
+
+#scv.tl.paga(adata, groups='CellType')
+scv.tl.paga(adata, groups='harmony_clusters_0.8')
+df = scv.get_df(adata, 'paga/transitions_confidence', precision=2).T
+scv.pl.paga(adata, basis='umap', size=50, alpha=.1,
+            min_edge_width=2, node_size_scale=1.5,save='velocity_paga.pdf')
+
+#examine the low latent cells
+# Define the threshold for low latent time
+low_latent_threshold = adata.obs['latent_time'].quantile(0.05)  # bottom 5%
+
+# Filter cells with low latent time
+low_latent_cells = adata[adata.obs['latent_time'] <= low_latent_threshold]
+
+# Print the number of cells with low latent time
+print(f"Number of cells with low latent time: {low_latent_cells.n_obs}")
+
+# Optional: Inspect the CellType distribution of low latent time cells
+print("Cell type distribution in low latent time cells:")
+print(low_latent_cells.obs['CellType'].value_counts())
+
+# Visualize these cells on UMAP
+scv.pl.scatter(low_latent_cells, color='CellType', basis='umap', size=80, 
+               title='Low Latent Time Cells on UMAP', frameon=False, save='low_latent_cells.pdf')
+# Save filtered AnnData object to H5AD format
+low_latent_cells.write("low_latent_time_cells.h5ad")
